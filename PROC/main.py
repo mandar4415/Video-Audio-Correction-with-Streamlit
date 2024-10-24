@@ -1,8 +1,7 @@
 # main.py
 import streamlit as st
-import moviepy.editor as mp
+import os
 from video_utils import process_video
-import api_keys
 
 st.title("Video Audio Replacement with AI-Generated Voice")
 

@@ -1,10 +1,10 @@
 # video_utils.py
 import openai
 import assemblyai
-import pyttsx3
-from TTS.api import TTS
+import os
+from gtts import gTTS
 from moviepy.editor import VideoFileClip
-from api_keys import AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, ASSEMBLYAI_API_KEY
+from api_keys import AZURE_OPENAI_API_KEY, ASSEMBLYAI_API_KEY
 
 # Transcription using AssemblyAI
 def transcribe_audio_assemblyai(audio_path):
@@ -12,21 +12,28 @@ def transcribe_audio_assemblyai(audio_path):
         'authorization': ASSEMBLYAI_API_KEY,
         'content-type': 'application/json'
     }
-    url = "https://api.assemblyai.com/v2/transcript"
+    upload_url = 'https://api.assemblyai.com/v2/upload'
+
+    # Upload the audio file to AssemblyAI
+    with open(audio_path, 'rb') as audio_file:
+        response = requests.post(upload_url, headers=headers, files={'file': audio_file})
+        audio_url = response.json().get('upload_url')
+
+    # Submit transcription job
+    transcript_url = 'https://api.assemblyai.com/v2/transcript'
+    response = requests.post(transcript_url, headers=headers, json={"audio_url": audio_url})
+    transcript_id = response.json().get('id')
+
+    # Wait for transcription to complete
+    status_url = f'{transcript_url}/{transcript_id}'
+    while True:
+        result = requests.get(status_url, headers=headers).json()
+        if result['status'] == 'completed':
+            return result['text']
+        elif result['status'] == 'failed':
+            raise Exception('Transcription failed.')
     
-    with open(audio_path, 'rb') as f:
-        data = f.read()
-
-    # Send to AssemblyAI
-    response = requests.post(url, headers=headers, files={"audio": data})
-    return response.json().get('text')
-
-# Use Whisper to transcribe audio
-def transcribe_audio_whisper(audio_path):
-    model = openai.Whisper("whisper-1")
-    with open(audio_path, "rb") as f:
-        transcription = model.transcribe(f)
-    return transcription['text']
+    return None
 
 # Correct transcription using GPT-4o
 def correct_transcription_gpt(transcription_text):
@@ -40,10 +47,11 @@ def correct_transcription_gpt(transcription_text):
     )
     return response['choices'][0]['message']['content']
 
-# Text-to-Speech using Coqui TTS
-def text_to_speech_coqui(corrected_text, output_path='output_audio.wav'):
-    tts = TTS("tts_models/en/ljspeech/tacotron2-DDC")
-    tts.tts_to_file(text=corrected_text, file_path=output_path)
+# Text-to-Speech using gTTS
+def text_to_speech_gtts(text, output_path='output_audio.mp3'):
+    tts = gTTS(text=text, lang='en')  # Convert the text to speech in English
+    tts.save(output_path)             # Save the speech to a file
+    print(f"Audio content written to {output_path}")
     return output_path
 
 # Replace audio in video
@@ -60,15 +68,15 @@ def process_video(video_path):
     audio_path = "extracted_audio.wav"
     video.audio.write_audiofile(audio_path)
 
-    # Transcribe the audio
+    # Transcribe the audio using AssemblyAI
     transcription = transcribe_audio_assemblyai(audio_path)
-    
-    # Correct the transcription
+
+    # Correct the transcription using GPT-4o
     corrected_transcription = correct_transcription_gpt(transcription)
-    
-    # Convert corrected text to speech
-    corrected_audio = text_to_speech_coqui(corrected_transcription)
-    
-    # Replace the original audio
+
+    # Convert corrected text to speech using gTTS
+    corrected_audio = text_to_speech_gtts(corrected_transcription)
+
+    # Replace the original audio in the video
     output_video = replace_audio_in_video(video_path, corrected_audio)
     return output_video
