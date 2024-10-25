@@ -1,26 +1,25 @@
 # video_utils.py
 import openai
-import assemblyai
-import os
+import requests
 from gtts import gTTS
-from moviepy.editor import VideoFileClip
+from moviepy.editor import VideoFileClip, AudioFileClip
 from api_keys import AZURE_OPENAI_API_KEY, ASSEMBLYAI_API_KEY
+from upload_audio import upload_audio_to_assemblyai
 
 # Transcription using AssemblyAI
 def transcribe_audio_assemblyai(audio_path):
+    # Upload the audio file to AssemblyAI using the function from upload_audio.py
+    audio_url = upload_audio_to_assemblyai(audio_path, ASSEMBLYAI_API_KEY)
+    if not audio_url:
+        raise Exception("Failed to upload audio for transcription.")
+
     headers = {
         'authorization': ASSEMBLYAI_API_KEY,
         'content-type': 'application/json'
     }
-    upload_url = 'https://api.assemblyai.com/v2/upload'
-
-    # Upload the audio file to AssemblyAI
-    with open(audio_path, 'rb') as audio_file:
-        response = requests.post(upload_url, headers=headers, files={'file': audio_file})
-        audio_url = response.json().get('upload_url')
+    transcript_url = 'https://api.assemblyai.com/v2/transcript'
 
     # Submit transcription job
-    transcript_url = 'https://api.assemblyai.com/v2/transcript'
     response = requests.post(transcript_url, headers=headers, json={"audio_url": audio_url})
     transcript_id = response.json().get('id')
 
@@ -32,7 +31,7 @@ def transcribe_audio_assemblyai(audio_path):
             return result['text']
         elif result['status'] == 'failed':
             raise Exception('Transcription failed.')
-    
+
     return None
 
 # Correct transcription using GPT-4o
@@ -57,26 +56,28 @@ def text_to_speech_gtts(text, output_path='output_audio.mp3'):
 # Replace audio in video
 def replace_audio_in_video(video_path, new_audio_path, output_video_path='final_video.mp4'):
     video = VideoFileClip(video_path)
-    audio = mp.AudioFileClip(new_audio_path)
+    audio = AudioFileClip(new_audio_path)
     new_video = video.set_audio(audio)
     new_video.write_videofile(output_video_path, codec='libx264', audio_codec='aac')
     return output_video_path
 
 # Process the entire video
 def process_video(video_path):
-    video = VideoFileClip(video_path)
-    audio_path = "extracted_audio.wav"
+    video = VideoFileClip(video_path)   
+    audio_path = "audio_sample.wav"
     video.audio.write_audiofile(audio_path)
 
     # Transcribe the audio using AssemblyAI
     transcription = transcribe_audio_assemblyai(audio_path)
+    print(f"Transcription: {transcription}")
 
     # Correct the transcription using GPT-4o
     corrected_transcription = correct_transcription_gpt(transcription)
+    print(f"Corrected Transcription: {corrected_transcription}")
 
     # Convert corrected text to speech using gTTS
-    corrected_audio = text_to_speech_gtts(corrected_transcription)
+    corrected_audio_path = text_to_speech_gtts(corrected_transcription)
 
     # Replace the original audio in the video
-    output_video = replace_audio_in_video(video_path, corrected_audio)
+    output_video = replace_audio_in_video(video_path, corrected_audio_path)
     return output_video
